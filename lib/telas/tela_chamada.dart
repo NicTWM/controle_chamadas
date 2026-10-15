@@ -12,19 +12,11 @@ class TelaChamada extends StatefulWidget {
 class _TelaChamadaState extends State<TelaChamada> {
   List<Map<String, dynamic>> _turnos = [];
   int? _turnoSelecionadoId;
-  List<Map<String, dynamic>> _pessoasDoTurno = [];
+  String _dataSelecionada = DateTime.now().toIso8601String().split('T')[0];
   
-  // Armazena o status escolhido para cada pessoa (Chave: pessoaId, Valor: String com a opção)
+  List<Map<String, dynamic>> _pessoasDoTurno = [];
   final Map<int, String> _statusPresenca = {};
-
-  final String _dataHoje = DateTime.now().toIso8601String().split('T')[0];
-
-  final List<String> _opcoesStatus = [
-    'PRESENTE',
-    'FALTA JUSTIFICADA',
-    'FALTA NÃO JUSTIFICADA',
-    'FALTA COM ATESTADO',
-  ];
+  bool _chamadaCarregada = false;
 
   @override
   void initState() {
@@ -33,139 +25,201 @@ class _TelaChamadaState extends State<TelaChamada> {
   }
 
   void _carregarTurnos() {
-    var turnos = ConexaoBanco.consultar('turnos');
     setState(() {
-      _turnos = turnos;
+      _turnos = ConexaoBanco.consultar('turnos');
       if (_turnos.isNotEmpty) {
-        _turnoSelecionadoId = _turnos.first['id'];
-        _carregarDadosTurno();
+        _turnoSelecionadoId = _turnos[0]['id'];
+        _carregarPessoasEStatus();
       }
     });
   }
 
-  void _carregarDadosTurno() {
+  void _carregarPessoasEStatus() {
     if (_turnoSelecionadoId == null) return;
 
-    var pessoas = ConexaoBanco.consultarPessoasPorTurno(_turnoSelecionadoId!);
-    // Verifica se já existe chamada salva para hoje neste turno
-    var statusSalvos = ConexaoBanco.consultarStatusChamadaSalva(_turnoSelecionadoId!, _dataHoje);
-
     setState(() {
-      _pessoasDoTurno = pessoas;
-      _statusPresenca.clear();
+      _pessoasDoTurno = ConexaoBanco.consultarPessoasPorTurno(_turnoSelecionadoId!);
+      
+      // Consulta se já existe chamada salva para este turno e data
+      Map<int, String> statusSalvos = ConexaoBanco.consultarStatusChamadaSalva(
+        _turnoSelecionadoId!, 
+        _dataSelecionada,
+      );
 
-      for (var p in _pessoasDoTurno) {
-        int pId = p['id'];
-        // Se já foi salva, recupera; senão, deixa em branco (nenhuma pré-selecionada)
-        if (statusSalvos.containsKey(pId)) {
-          _statusPresenca[pId] = statusSalvos[pId]!;
+      _statusPresenca.clear();
+      for (var pessoa in _pessoasDoTurno) {
+        int pessoaId = pessoa['id'];
+        // Se já houver salvo, carrega o status. Caso contrário, deixa em branco (sem pré-seleção)
+        if (statusSalvos.containsKey(pessoaId)) {
+          _statusPresenca[pessoaId] = statusSalvos[pessoaId]!;
         }
       }
+      _chamadaCarregada = true;
     });
   }
 
-  void _concluirChamada() {
-    if (_turnoSelecionadoId == null || _pessoasDoTurno.isEmpty) {
+  Future<void> _selecionarData(BuildContext context) async {
+    DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.parse(_dataSelecionada),
+      firstDate: DateTime(2025),
+      lastDate: DateTime(2030),
+      locale: const Locale('pt', 'BR'),
+    );
+    if (picked != null) {
+      setState(() {
+        _dataSelecionada = picked.toIso8601String().split('T')[0];
+        _carregarPessoasEStatus();
+      });
+    }
+  }
+
+  void _atualizarStatus(int pessoaId, String status) {
+    setState(() {
+      _statusPresenca[pessoaId] = status;
+    });
+  }
+
+  void _salvarChamada() {
+    if (_turnoSelecionadoId == null) return;
+
+    if (_statusPresenca.length < _pessoasDoTurno.length) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Aviso: Não há colaboradores neste turno para registrar chamada.'), backgroundColor: Colors.orange),
+        const SnackBar(
+          content: Text('Atenção: Existem colaboradores sem status de presença definido!'),
+          backgroundColor: Colors.orange,
+        ),
       );
-      return;
     }
 
-    // Validação: verifica se todos os colaboradores possuem um status selecionado
-    for (var p in _pessoasDoTurno) {
-      int pId = p['id'];
-      if (!_statusPresenca.containsKey(_statusPresenca.containsKey(pId) ? pId : -1) || 
-          _statusPresenca[pId] == null || 
-          _statusPresenca[pId]!.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro: O colaborador "${p['nome']}" está sem status de chamada definido!'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-    }
-
-    // Salva no banco
-    ConexaoBanco.salvarChamada(_turnoSelecionadoId!, _dataHoje, _statusPresenca);
+    ConexaoBanco.salvarChamada(_turnoSelecionadoId!, _dataSelecionada, _statusPresenca);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Chamada concluída e salva com sucesso!'),
+        content: Text('Chamada salva com sucesso!'),
         backgroundColor: Colors.green,
       ),
     );
 
-    // Retorna automaticamente para a página inicial
     Navigator.pop(context);
-  }
-
-  Color _obterCorStatus(String? status) {
-    switch (status) {
-      case 'PRESENTE':
-        return Colors.green;
-      case 'FALTA JUSTIFICADA':
-        return Colors.blue;
-      case 'FALTA NÃO JUSTIFICADA':
-        return Colors.red;
-      case 'FALTA COM ATESTADO':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = AppController.instance.isDarkTheme;
 
+    // Cálculo da Barra de Progresso
+    int totalColaboradores = _pessoasDoTurno.length;
+    int respondidos = _statusPresenca.values.where((s) => s.isNotEmpty).length;
+    double progresso = totalColaboradores > 0 ? (respondidos / totalColaboradores) : 0.0;
+    int percentual = (progresso * 100).toInt();
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Controle de Presença - Grupo Multilixo'),
+        title: const Text('Registrar Chamada / Presença'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Filtros de Turno e Data
             Card(
-              elevation: 3,
+              elevation: 2,
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(12.0),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Data: $_dataHoje',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        const Text('Turno:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<int>(
+                              value: _turnoSelecionadoId,
+                              isExpanded: true,
+                              items: _turnos.map((turno) {
+                                return DropdownMenuItem<int>(
+                                  value: turno['id'],
+                                  child: Text(turno['nome'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                                );
+                              }).toList(),
+                              onChanged: (int? novoId) {
+                                setState(() {
+                                  _turnoSelecionadoId = novoId;
+                                  _carregarPessoasEStatus();
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<int>(
-                      value: _turnoSelecionadoId,
-                      decoration: const InputDecoration(
-                        labelText: 'Selecionar Turno',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _turnos.map((turno) {
-                        return DropdownMenuItem<int>(
-                          value: turno['id'],
-                          child: Text(turno['nome']),
-                        );
-                      }).toList(),
-                      onChanged: (novoId) {
-                        setState(() {
-                          _turnoSelecionadoId = novoId;
-                          _carregarDadosTurno();
-                        });
-                      },
+                    const Divider(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Data: $_dataSelecionada', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6B2D82),
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.calendar_today, size: 16),
+                          label: const Text('Alterar Data'),
+                          onPressed: () => _selecionarData(context),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            // BARRA DE PROGRESSO DINÂMICA
+            Card(
+              elevation: 2,
+              color: isDark ? const Color(0xFF1E1E1E) : Colors.purple.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Progresso da Chamada:',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '$respondidos / $totalColaboradores respondidos ($percentual%)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: percentual == 100 ? Colors.green : const Color(0xFF6B2D82),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: progresso,
+                        minHeight: 10,
+                        backgroundColor: Colors.grey.shade300,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          percentual == 100 ? Colors.green : const Color(0xFFF28C18),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
 
             const Text(
               'Lista de Colaboradores',
@@ -173,11 +227,14 @@ class _TelaChamadaState extends State<TelaChamada> {
             ),
             const SizedBox(height: 8),
 
+            // Lista de Pessoas para Marcação
             Expanded(
-              child: _pessoasDoTurno.isEmpty
+              child: !_chamadaCarregada || _pessoasDoTurno.isEmpty
                   ? Center(
                       child: Text(
-                        'Nenhum colaborador ativo vinculado a este turno.',
+                        _pessoasDoTurno.isEmpty
+                            ? 'Nenhum colaborador vinculado a este turno.'
+                            : 'A carregar...',
                         style: TextStyle(color: isDark ? Colors.white70 : Colors.black54),
                       ),
                     )
@@ -186,62 +243,33 @@ class _TelaChamadaState extends State<TelaChamada> {
                       itemBuilder: (context, index) {
                         var pessoa = _pessoasDoTurno[index];
                         int pessoaId = pessoa['id'];
-                        String? statusAtual = _statusPresenca[pessoaId];
+                        String statusAtual = _statusPresenca[pessoaId] ?? '';
 
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 6),
                           child: Padding(
-                            padding: const EdgeInsets.all(12.0),
+                            padding: const EdgeInsets.all(10.0),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    CircleAvatar(
-                                      backgroundColor: _obterCorStatus(statusAtual),
-                                      child: const Icon(Icons.person, color: Colors.white),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            pessoa['nome'],
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                          ),
-                                          Text('Cargo: ${pessoa['cargo']}'),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                Text(
+                                  pessoa['nome'],
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                                 ),
-                                const Divider(height: 16),
-                                const Text('Selecione o Status:', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
-                                const SizedBox(height: 6),
-                                // Opções de rádio ou chips para as 4 opções exatas
+                                Text(
+                                  'Cargo: ${pessoa['cargo']}',
+                                  style: TextStyle(color: isDark ? Colors.white70 : Colors.grey.shade700, fontSize: 13),
+                                ),
+                                const SizedBox(height: 8),
                                 Wrap(
-                                  spacing: 8.0,
+                                  spacing: 6.0,
                                   runSpacing: 4.0,
-                                  children: _opcoesStatus.map((opcao) {
-                                    bool selecionado = statusAtual == opcao;
-                                    return ChoiceChip(
-                                      label: Text(opcao, style: const TextStyle(fontSize: 12)),
-                                      selected: selecionado,
-                                      selectedColor: _obterCorStatus(opcao).withOpacity(0.3),
-                                      labelStyle: TextStyle(
-                                        color: selecionado ? _obterCorStatus(opcao) : (isDark ? Colors.white70 : Colors.black87),
-                                        fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
-                                      ),
-                                      onSelected: (bool selected) {
-                                        setState(() {
-                                          if (selected) {
-                                            _statusPresenca[pessoaId] = opcao;
-                                          }
-                                        });
-                                      },
-                                    );
-                                  }).toList(),
+                                  children: [
+                                    _botaoStatus(pessoaId, 'PRESENTE', Colors.green, statusAtual),
+                                    _botaoStatus(pessoaId, 'FALTA JUSTIFICADA', Colors.blue, statusAtual),
+                                    _botaoStatus(pessoaId, 'FALTA NÃO JUSTIFICADA', Colors.red, statusAtual),
+                                    _botaoStatus(pessoaId, 'FALTA COM ATESTADO', Colors.orange, statusAtual),
+                                  ],
                                 ),
                               ],
                             ),
@@ -250,9 +278,9 @@ class _TelaChamadaState extends State<TelaChamada> {
                       },
                     ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
 
-            // Botão CONCLUIR
+            // Botão Finalizar Chamada
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -261,12 +289,33 @@ class _TelaChamadaState extends State<TelaChamada> {
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
-                onPressed: _concluirChamada,
-                child: const Text('CONCLUIR CHAMADA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                onPressed: _salvarChamada,
+                child: const Text(
+                  'FINALIZAR E SALVAR CHAMADA',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _botaoStatus(int pessoaId, String statusTexto, Color cor, String statusAtual) {
+    bool selecionado = statusAtual == statusTexto;
+    return OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selecionado ? cor : Colors.transparent,
+        foregroundColor: selecionado ? Colors.white : cor,
+        side: BorderSide(color: cor),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        minimumSize: const Size(0, 32),
+      ),
+      onPressed: () => _atualizarStatus(pessoaId, statusTexto),
+      child: Text(
+        statusTexto,
+        style: TextStyle(fontSize: 11, fontWeight: selecionado ? FontWeight.bold : FontWeight.normal),
       ),
     );
   }
