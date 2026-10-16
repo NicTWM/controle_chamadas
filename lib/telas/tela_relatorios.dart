@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:excel/excel.dart' as excel_lib;
+import 'web_download_stub.dart' if (dart.library.html) 'web_download_web.dart';
 import '../banco/conexao_banco.dart';
 import '../regras/app_controller.dart';
 
@@ -143,6 +146,293 @@ class _TelaRelatoriosState extends State<TelaRelatorios> {
     return dataIso;
   }
 
+  void _mostrarDialogoExportacao() {
+    DateTime? dataInicioModal = _dataInicial;
+    DateTime? dataFimModal = _dataFinal;
+    Set<String> cargosModal = Set.from(_cargosSelecionados);
+    Set<String> statusModal = Set.from(_statusSelecionados);
+    
+    final Set<String> turnosDisponiveis = {'1º Turno', '2º Turno', '3º Turno'};
+    final Set<String> turnosSelecionados = {'1º Turno', '2º Turno', '3º Turno'};
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateModal) {
+            int totalRegistrosPreview = 0;
+            for (var chamada in _historicoOriginal) {
+              String dataStr = chamada['data'];
+              DateTime? dataChamada = DateTime.tryParse(dataStr);
+              String turno = chamada['turno'] ?? '';
+
+              if (dataInicioModal != null && dataChamada != null) {
+                DateTime inicioSemHoras = DateTime(dataInicioModal!.year, dataInicioModal!.month, dataInicioModal!.day);
+                DateTime chamadaSemHoras = DateTime(dataChamada.year, dataChamada.month, dataChamada.day);
+                if (chamadaSemHoras.isBefore(inicioSemHoras)) continue;
+              }
+
+              if (dataFimModal != null && dataChamada != null) {
+                DateTime fimSemHoras = DateTime(dataFimModal!.year, dataFimModal!.month, dataFimModal!.day);
+                DateTime chamadaSemHoras = DateTime(dataChamada.year, dataChamada.month, dataChamada.day);
+                if (chamadaSemHoras.isAfter(fimSemHoras)) continue;
+              }
+
+              if (!turnosSelecionados.contains(turno)) continue;
+
+              List<dynamic> detalhes = chamada['detalhes'] ?? [];
+              var filtrados = detalhes.where((det) {
+                String cargo = det['cargo'] ?? '';
+                String status = det['status'] ?? '';
+                bool passaCargo = cargosModal.isEmpty || cargosModal.contains(cargo);
+                bool passaStatus = statusModal.isEmpty || statusModal.contains(status);
+                return passaCargo && passaStatus;
+              }).toList();
+
+              totalRegistrosPreview += filtrados.length;
+            }
+
+            return AlertDialog(
+              title: const Text('Exportar Relatorio para Excel'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 450),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Selecione os parametros para o arquivo XLSX:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 12),
+                      
+                      const Text('Periodo:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                DateTime? picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: DateTime.now(),
+                                  firstDate: DateTime(2025),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (picked != null) {
+                                  setStateModal(() => dataInicioModal = picked);
+                                }
+                              },
+                              child: Text(dataInicioModal == null ? 'Data Inicial' : _formatarDataPtBr(dataInicioModal!.toIso8601String().split('T')[0])),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                DateTime? picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: DateTime.now(),
+                                  firstDate: DateTime(2025),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (picked != null) {
+                                  setStateModal(() => dataFimModal = picked);
+                                }
+                              },
+                              child: Text(dataFimModal == null ? 'Data Final' : _formatarDataPtBr(dataFimModal!.toIso8601String().split('T')[0])),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      const Text('Turnos:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Wrap(
+                        spacing: 6,
+                        children: turnosDisponiveis.map((turno) {
+                          bool sel = turnosSelecionados.contains(turno);
+                          return FilterChip(
+                            label: Text(turno, style: const TextStyle(fontSize: 11)),
+                            selected: sel,
+                            onSelected: (val) {
+                              setStateModal(() {
+                                if (val) {
+                                  turnosSelecionados.add(turno);
+                                } else {
+                                  turnosSelecionados.remove(turno);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 12),
+
+                      const Text('Cargos:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Wrap(
+                        spacing: 6,
+                        children: _cargosDisponiveis.map((cargo) {
+                          bool sel = cargosModal.contains(cargo);
+                          return FilterChip(
+                            label: Text(cargo, style: const TextStyle(fontSize: 11)),
+                            selected: sel,
+                            onSelected: (val) {
+                              setStateModal(() {
+                                if (val) {
+                                  cargosModal.add(cargo);
+                                } else {
+                                  cargosModal.remove(cargo);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 12),
+
+                      const Text('Status:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Wrap(
+                        spacing: 6,
+                        children: _statusDisponiveis.map((status) {
+                          bool sel = statusModal.contains(status);
+                          return FilterChip(
+                            label: Text(status, style: const TextStyle(fontSize: 10)),
+                            selected: sel,
+                            onSelected: (val) {
+                              setStateModal(() {
+                                if (val) {
+                                  statusModal.add(status);
+                                } else {
+                                  statusModal.remove(status);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const Divider(height: 24),
+
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6B2D82).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF6B2D82)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Resumo da Exportacao:', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6B2D82))),
+                            const SizedBox(height: 4),
+                            Text('Registros selecionados: $totalRegistrosPreview'),
+                            Text('Periodo: ${dataInicioModal == null && dataFimModal == null ? "Todos" : "Personalizado"}'),
+                            Text('Turnos: ${turnosSelecionados.length == turnosDisponiveis.length ? "Todos" : turnosSelecionados.join(", ")}'),
+                            Text('Cargos: ${cargosModal.isEmpty ? "Todos" : "${cargosModal.length} selecionados"}'),
+                            Text('Status: ${statusModal.isEmpty ? "Todos" : "${statusModal.length} selecionados"}'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6B2D82),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: totalRegistrosPreview == 0 ? null : () {
+                    Navigator.pop(context);
+                    _executarExportacaoFinal(dataInicioModal, dataFimModal, turnosSelecionados, cargosModal, statusModal);
+                  },
+                  child: const Text('Confirmar e Gerar XLSX'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _executarExportacaoFinal(DateTime? inicio, DateTime? fim, Set<String> turnosSel, Set<String> cargosSel, Set<String> statusSel) {
+    var excel = excel_lib.Excel.createExcel();
+    String sheetName = 'Relatorio_Presenca';
+    excel.rename(excel.getDefaultSheet() ?? 'Sheet1', sheetName);
+    excel_lib.Sheet sheetObject = excel[sheetName]!;
+
+    List<excel_lib.CellValue> cabecalho = [
+      excel_lib.TextCellValue('Data'),
+      excel_lib.TextCellValue('Turno'),
+      excel_lib.TextCellValue('Colaborador'),
+      excel_lib.TextCellValue('Cargo'),
+      excel_lib.TextCellValue('Status'),
+    ];
+    sheetObject.appendRow(cabecalho);
+
+    for (var chamada in _historicoOriginal) {
+      String dataStr = chamada['data'];
+      DateTime? dataChamada = DateTime.tryParse(dataStr);
+      String turno = chamada['turno'] ?? '';
+
+      if (inicio != null && dataChamada != null) {
+        DateTime inicioSemH = DateTime(inicio.year, inicio.month, inicio.day);
+        DateTime chamadaSemH = DateTime(dataChamada.year, dataChamada.month, dataChamada.day);
+        if (chamadaSemH.isBefore(inicioSemH)) continue;
+      }
+
+      if (fim != null && dataChamada != null) {
+        DateTime fimSemH = DateTime(fim.year, fim.month, fim.day);
+        DateTime chamadaSemH = DateTime(dataChamada.year, dataChamada.month, dataChamada.day);
+        if (chamadaSemH.isAfter(fimSemH)) continue;
+      }
+
+      if (!turnosSel.contains(turno)) continue;
+
+      List detalhes = chamada['detalhes'] ?? [];
+      for (var det in detalhes) {
+        String cargo = det['cargo'] ?? '';
+        String status = det['status'] ?? '';
+
+        bool passaCargo = cargosSel.isEmpty || cargosSel.contains(cargo);
+        bool passaStatus = statusSel.isEmpty || statusSel.contains(status);
+
+        if (passaCargo && passaStatus) {
+          List<excel_lib.CellValue> linha = [
+            excel_lib.TextCellValue(_formatarDataPtBr(chamada['data'])),
+            excel_lib.TextCellValue(turno),
+            excel_lib.TextCellValue(det['nome'] ?? ''),
+            excel_lib.TextCellValue(cargo),
+            excel_lib.TextCellValue(status),
+          ];
+          sheetObject.appendRow(linha);
+        }
+      }
+    }
+
+    var fileBytes = excel.save();
+    if (fileBytes != null) {
+      String nomeArquivo = 'relatorio_presenca_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      
+      if (kIsWeb) {
+        baixarArquivoWeb(fileBytes, nomeArquivo);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Relatorio exportado para Excel com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = AppController.instance.isDarkTheme;
@@ -159,7 +449,14 @@ class _TelaRelatoriosState extends State<TelaRelatorios> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Relatórios e Histórico de Chamadas'),
+        title: const Text('Relatorios e Historico de Chamadas'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            tooltip: 'Exportar para Excel (.xlsx)',
+            onPressed: _historicoFiltrado.isEmpty ? null : _mostrarDialogoExportacao,
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -262,9 +559,23 @@ class _TelaRelatoriosState extends State<TelaRelatorios> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Histórico Agrupado por Data',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Historico Agrupado por Data',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6B2D82),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.table_chart, size: 16),
+                  label: const Text('Exportar Excel'),
+                  onPressed: _historicoFiltrado.isEmpty ? null : _mostrarDialogoExportacao,
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Expanded(
@@ -315,7 +626,7 @@ class _TelaRelatoriosState extends State<TelaRelatorios> {
                                       child: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          const Text('Resumo Estatístico do Turno:', style: TextStyle(fontWeight: FontWeight.bold)),
+                                          const Text('Resumo Estatistico do Turno:', style: TextStyle(fontWeight: FontWeight.bold)),
                                           const SizedBox(height: 6),
                                           Row(
                                             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -328,7 +639,7 @@ class _TelaRelatoriosState extends State<TelaRelatorios> {
                                           Row(
                                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                                             children: [
-                                              _badgeEstatistica('F. Não Justif.', chamada['total_falta_nao_justificada'], Colors.red),
+                                              _badgeEstatistica('F. Nao Justif.', chamada['total_falta_nao_justificada'], Colors.red),
                                               _badgeEstatistica('Atestado', chamada['total_falta_atestado'], Colors.orange),
                                             ],
                                           ),
