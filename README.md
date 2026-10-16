@@ -28,3 +28,4 @@ Planilhas: Presenças, Pessoas (com turnos), Auditoria (só Admin).
 
 BACKUP: Administrador exporta semanalmente. Excel é só consulta.
 SEM importação/restauração na V1.
+https://share.gemini.google/fe8YvzUikoRO
