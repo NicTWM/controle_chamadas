@@ -21,7 +21,7 @@ PERFIS:
 - Administrador: tudo.
 - Operador: fazer chamada, corrigir chamadas, consultar histórico.
 - Somente Admin: pessoas, usuários, auditoria, exportação Excel.
-- 
+  
 - EXCEL (.xlsx): filtros combináveis (período, turno, pessoa, cargo, setor, empresa,
 situação, usuário, chamadas corrigidas) e escolha de colunas.
 Planilhas: Presenças, Pessoas (com turnos), Auditoria (só Admin).
